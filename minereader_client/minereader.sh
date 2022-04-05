@@ -4,7 +4,7 @@ if [[ -z "$1" ]] || [[ -z "$2" ]]; then
 	echo " "
 	echo "Please enter a Moniker for your worker and a minereader server IP address and port"
 	echo " "
-	echo "e.g. $0 'MyWorkerName x.x.x.x:YYYY'"
+	echo "e.g. $0 'MyWorkerName' x.x.x.x:YYYY"
 	echo " "
 	exit
 fi
