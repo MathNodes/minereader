@@ -92,6 +92,20 @@ GRANT ALTER, REFERENCES, SELECT, INSERT, UPDATE, CREATE, DELETE, LOCK TABLES,SHO
 FLUSH PRIVILEGES;
 ```
 
+## SQL Query for Status
+
+```sql
+SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report
+FROM 
+(WITH ranked_messages AS (
+  SELECT m.*, ROW_NUMBER() OVER (PARTITION BY moniker ORDER BY id DESC) AS rn
+  FROM miners AS m 
+)
+SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report FROM ranked_messages WHERE rn = 1) `miners`
+
+WHERE moniker <> '' 
+```
+
 ## Metabase with 60 second refresh
 
 ![img/derohe_metabase.png](img/derohe_metabase.png)
