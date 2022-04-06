@@ -95,15 +95,25 @@ FLUSH PRIVILEGES;
 ## SQL Query for Status
 
 ```sql
-SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report
+SELECT `source`.`moniker` AS `moniker`, `source`.`blocks` AS `blocks`, `Question 825`.`mini_blocks`  AS `mini_blocks`, `source`.`network_hash_rate` AS `network_hash_rate`, `source`.`worker_hash_rate` AS `worker_hash_rate`, `source`.`height` AS `height`, `source`.`last_report` AS `last_report`
+FROM (SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report
 FROM 
 (WITH ranked_messages AS (
-  SELECT m.*, ROW_NUMBER() OVER (PARTITION BY moniker ORDER BY id DESC) AS rn
+  SELECT m.*, ROW_NUMBER() OVER (PARTITION BY moniker
+ORDER BY id DESC) AS rn
   FROM miners AS m 
 )
-SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report FROM ranked_messages WHERE rn = 1) `miners`
+SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report FROM ranked_messages
+WHERE rn = 1) `miners`
 
-WHERE moniker <> '' 
+WHERE moniker <> '' ) `source`
+LEFT JOIN (  SELECT m.moniker, MAX(m.mini_blocks) as mini_blocks
+  FROM miners AS m 
+  WHERE m.moniker <> ''
+ 
+GROUP BY m.moniker
+) `Question 825` ON `source`.`moniker` = `Question 825`.`moniker`
+LIMIT 1048576
 ```
 
 ## Metabase with 60 second refresh
