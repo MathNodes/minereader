@@ -93,9 +93,10 @@ FLUSH PRIVILEGES;
 ```
 
 ## SQL Query for Status
+**UPDATED** (April 8th, 2022)
 
 ```sql
-SELECT `source`.`moniker` AS `moniker`, `source`.`blocks` AS `blocks`, `Question 825`.`mini_blocks`  AS `mini_blocks`, `source`.`network_hash_rate` AS `network_hash_rate`, `source`.`worker_hash_rate` AS `worker_hash_rate`, `source`.`height` AS `height`, `source`.`last_report` AS `last_report`
+SELECT `source`.`moniker` AS `moniker`, `source`.`blocks` AS `blocks`, CASE WHEN `Question 825`.`mini_blocks`  IS NULL THEN 0 ELSE `Question 825`.`mini_blocks` END as mini_blocks, `source`.`network_hash_rate` AS `network_hash_rate`, `source`.`worker_hash_rate` AS `worker_hash_rate`, `source`.`height` AS `height`, `source`.`last_report` AS `last_report`
 FROM (SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report
 FROM 
 (WITH ranked_messages AS (
@@ -107,16 +108,20 @@ SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,
 WHERE rn = 1) `miners`
 
 WHERE moniker <> '' ) `source`
-LEFT JOIN (  SELECT m.moniker, MAX(m.mini_blocks) as mini_blocks
-  FROM miners AS m 
-  WHERE m.moniker <> ''
- 
-GROUP BY m.moniker
+LEFT JOIN (  SELECT `source`.moniker, SUM(`source`.BLARGY) as mini_blocks
+FROM
+    (SELECT `source`.moniker, CASE WHEN mini_blocks <> minis THEN 1 ELSE 0 END as BLARGY
+    FROM
+      (SELECT m.*, ROW_NUMBER() OVER (PARTITION BY moniker ORDER BY id DESC) AS rn, LAG(mini_blocks) OVER (PARTITION BY moniker ORDER BY id ASC) as minis
+      FROM miners AS m ) `source`
+      
+    WHERE `source`.mini_blocks > 0 ) `source`
+GROUP BY `source`.moniker
 ) `Question 825` ON `source`.`moniker` = `Question 825`.`moniker`
 LIMIT 1048576
 ```
 
-## Metabase with 60 second refresh
+## Metabase with 60 second auto-refresh
 
 ![img/derohe_metabase.png](img/derohe_metabase.png)
-
+[Metabase](http://metabase.com)
