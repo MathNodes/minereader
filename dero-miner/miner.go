@@ -47,6 +47,7 @@ import "github.com/chzyer/readline"
 import "github.com/docopt/docopt-go"
 
 import "github.com/deroproject/derohe/astrobwt/astrobwt_fast"
+import "github.com/deroproject/derohe/astrobwt/astrobwtv3"
 
 import "github.com/gorilla/websocket"
 
@@ -67,6 +68,7 @@ var our_height int64
 
 var block_counter uint64
 var mini_block_counter uint64
+var rejected uint64
 var logger logr.Logger
 
 var command_line string = `dero-miner
@@ -181,7 +183,7 @@ func main() {
 		var wg sync.WaitGroup
 
 		fmt.Printf("%20s %20s %20s %20s %20s \n", "Threads", "Total Time", "Total Iterations", "Time/PoW ", "Hash Rate/Sec")
-		iterations = 20000
+		iterations = 1000
 		for bench := 1; bench <= threads; bench++ {
 			processor = 0
 			now := time.Now()
@@ -281,16 +283,16 @@ func main() {
 				if !globals.IsMainnet() {
 					testnet_string = "\033[31m TESTNET"
 				}
-
-				l.SetPrompt(fmt.Sprintf("\033[1m\033[32mDERO Miner: \033[0m"+color+"Height %d "+pcolor+" BLOCKS %d MiniBlocks %d \033[32mNW %s %s>%s>>\033[0m ", our_height, block_counter, mini_block_counter, hash_rate_string, mining_string, testnet_string))
-				
-				//added by MathNodes for logging
-				logger.V(0).Info("", "height", strconv.FormatInt(int64(our_height),10), "blocks", strconv.FormatInt(int64(block_counter),12), "mini_blocks", strconv.FormatInt(int64(mini_block_counter),12), "hash_rate", hash_rate_string, "worker_hashrate", mining_string)
+				// MathNodes. Log details to file for minereader
+				logger.V(0).Info("", "height", strconv.FormatInt(int64(our_height),10), "blocks", strconv.FormatInt(int64(block_counter),12), 
+"mini_blocks", strconv.FormatInt(int64(mini_block_counter),12), "hash_rate",
+ hash_rate_string, "worker_hashrate", mining_string)
+				l.SetPrompt(fmt.Sprintf("\033[1m\033[32mDERO Miner: \033[0m"+color+"Height %d "+pcolor+" BLOCKS %d MiniBlocks %d Rejected %d \033[32mNW %s %s>%s>>\033[0m ", our_height, block_counter, mini_block_counter, rejected, hash_rate_string, mining_string, testnet_string))
 				l.Refresh()
 				last_our_height = our_height
 				last_best_height = best_height
 			}
-			time.Sleep(60 * time.Second) //changed to log every minute instead of every second (MathNodes)
+			time.Sleep(60 * time.Second)
 		}
 	}()
 
@@ -384,9 +386,11 @@ func random_execution(wg *sync.WaitGroup, iterations int) {
 
 	scratch := astrobwt_fast.Pool.Get().(*astrobwt_fast.ScratchData)
 	rand.Read(workbuf[:])
+	_ = scratch
 
 	for i := 0; i < iterations; i++ {
-		_ = astrobwt_fast.POW_optimized(workbuf[:], scratch)
+		//_ = astrobwt_fast.POW_optimized(workbuf[:], scratch)
+		_ = astrobwtv3.AstroBWTv3(workbuf[:])
 	}
 	wg.Done()
 	runtime.UnlockOSThread()
@@ -435,7 +439,10 @@ func getwork(wallet_address string) {
 		}
 
 		block_counter = job.Blocks
-		mini_block_counter = job.MiniBlocks
+		mini_block_counter = job.MiniBlocks // note if the miner submits the job late, though his counter
+		// will increase, but a block has been already found, so
+		// orphan miniblocks may be there ( means they will not br rewarded)
+		rejected = job.Rejected
 		hash_rate = job.Difficultyuint64
 		our_height = int64(job.Height)
 		Difficulty = job.Difficultyuint64
@@ -449,6 +456,10 @@ func getwork(wallet_address string) {
 func mineblock(tid int) {
 	var diff big.Int
 	var work [block.MINIBLOCK_SIZE]byte
+
+	var random_buf [12]byte
+
+	rand.Read(random_buf[:])
 
 	scratch := astrobwt_fast.Pool.Get().(*astrobwt_fast.ScratchData)
 
@@ -470,11 +481,14 @@ func mineblock(tid int) {
 
 		n, err := hex.Decode(work[:], []byte(myjob.Blockhashing_blob))
 		if err != nil || n != block.MINIBLOCK_SIZE {
-			logger.Error(err, "Blockwork could not decoded successfully", "blockwork", myjob.Blockhashing_blob, "n", n, "job", myjob)
+			logger.Error(err, "Blockwork could not be decoded successfully", "blockwork", myjob.Blockhashing_blob, "n", n, "job", myjob)
 			time.Sleep(time.Second)
 			continue
 		}
 
+		height := binary.BigEndian.Uint64(work[0:]) & 0x000000ffffffffff
+
+		copy(work[block.MINIBLOCK_SIZE-12:], random_buf[:]) // add more randomization in the mix
 		work[block.MINIBLOCK_SIZE-1] = byte(tid)
 
 		diff.SetString(myjob.Difficulty, 10)
@@ -485,23 +499,46 @@ func mineblock(tid int) {
 			continue
 		}
 
-		for local_job_counter == job_counter { // update job when it comes, expected rate 1 per second
-			i++
-			binary.BigEndian.PutUint32(nonce_buf, i)
+		if int64(height) < globals.Config.MAJOR_HF2_HEIGHT {
+			for local_job_counter == job_counter { // update job when it comes, expected rate 1 per second
+				i++
+				binary.BigEndian.PutUint32(nonce_buf, i)
 
-			powhash := astrobwt_fast.POW_optimized(work[:], scratch)
-			atomic.AddUint64(&counter, 1)
+				powhash := astrobwt_fast.POW_optimized(work[:], scratch)
+				atomic.AddUint64(&counter, 1)
 
-			if CheckPowHashBig(powhash, &diff) == true {
-				logger.V(1).Info("Successfully found DERO miniblock", "difficulty", myjob.Difficulty, "height", myjob.Height)
-				func() {
-					defer globals.Recover(1)
-					connection_mutex.Lock()
-					defer connection_mutex.Unlock()
-					connection.WriteJSON(rpc.SubmitBlock_Params{JobID: myjob.JobID, MiniBlockhashing_blob: fmt.Sprintf("%x", work[:])})
-				}()
+				if CheckPowHashBig(powhash, &diff) == true { // note we are doing a local, NW might have moved meanwhile
+					logger.V(1).Info("Successfully found DERO miniblock (going to submit)", "difficulty", myjob.Difficulty, "height", myjob.Height)
+					func() {
+						defer globals.Recover(1)
+						connection_mutex.Lock()
+						defer connection_mutex.Unlock()
+						connection.WriteJSON(rpc.SubmitBlock_Params{JobID: myjob.JobID, MiniBlockhashing_blob: fmt.Sprintf("%x", work[:])})
+					}()
 
+				}
 			}
+		} else {
+
+			for local_job_counter == job_counter { // update job when it comes, expected rate 1 per second
+				i++
+				binary.BigEndian.PutUint32(nonce_buf, i)
+
+				powhash := astrobwtv3.AstroBWTv3(work[:])
+				atomic.AddUint64(&counter, 1)
+
+				if CheckPowHashBig(powhash, &diff) == true { // note we are doing a local, NW might have moved meanwhile
+					logger.V(1).Info("Successfully found DERO miniblock (going to submit)", "difficulty", myjob.Difficulty, "height", myjob.Height)
+					func() {
+						defer globals.Recover(1)
+						connection_mutex.Lock()
+						defer connection_mutex.Unlock()
+						connection.WriteJSON(rpc.SubmitBlock_Params{JobID: myjob.JobID, MiniBlockhashing_blob: fmt.Sprintf("%x", work[:])})
+					}()
+
+				}
+			}
+
 		}
 	}
 }
