@@ -100,10 +100,10 @@ CREATE TABLE miner_history (id INT UNSIGNED NOT NULL AUTO_INCREMENT, moniker VAR
 
 
 ## SQL Query for Status
-**UPDATED** (April 16th, 2022)
+**UPDATED** (December 20th, 2022)
 
 ```sql
-SELECT `source`.`moniker` AS `Moniker`, `source`.`blocks` AS `Blocks`, `source`.`mb` as `Mini-Blocks` , SUM(`source`.`mb`) OVER (ORDER BY `source`.`moniker`) as "Cumulative Mini-Blocks",`source`.`network_hash_rate` AS `Net Hashrate`, `source`.`worker_hash_rate` AS `Worker Hashrate`,CONCAT(ROUND(SUM(SUBSTRING_INDEX(SUBSTRING_INDEX(`source`.`worker_hash_rate`, ' ', 1), ' ', -1)) OVER (ORDER BY `source`.`moniker`),3), " KH/s") AS "Cumulative Hashrate", `source`.`height` AS `Height`, `source`.`last_report` AS `Last Report`
+SELECT `source`.`moniker` AS `Moniker`, `source`.`blocks` AS `Blocks`, `source`.`mb` as `Mini-Blocks` , SUM(`source`.`mb`) OVER (ORDER BY `source`.`moniker`) as "Cumulative Mini-Blocks",`source`.`network_hash_rate` AS `Net Hashrate`, `source`.`worker_hash_rate` AS `Worker Hashrate`,CONCAT(ROUND(SUM(IF(SUBSTRING_INDEX(SUBSTRING_INDEX(`source`.`worker_hash_rate`, ' ', 1), ' ', -1) < 4,SUBSTRING_INDEX(SUBSTRING_INDEX(`source`.`worker_hash_rate`, ' ', 1), ' ', -1)*1024,SUBSTRING_INDEX(SUBSTRING_INDEX(`source`.`worker_hash_rate`, ' ', 1), ' ', -1)) ) OVER (ORDER BY `source`.`moniker`)/1024,3), " KH/s") AS "Cumulative Hashrate", `source`.`height` AS `Height`, `source`.`last_report` AS `Last Report`
 FROM
     (SELECT `source`.`moniker` AS `moniker`, `source`.`blocks` AS `blocks`, CASE WHEN `Question 825`.`mini_blocks`  IS NULL THEN 0 ELSE `Question 825`.`mini_blocks` END as mb, `source`.`network_hash_rate` AS `network_hash_rate`, `source`.`worker_hash_rate` AS `worker_hash_rate`, `source`.`height` AS `height`, `source`.`last_report` AS `last_report`
     FROM (SELECT moniker, blocks, mini_blocks, network_hash_rate, worker_hash_rate,height,last_report
@@ -127,6 +127,7 @@ FROM
         WHERE `source`.mini_blocks > 0 ) `source`
     GROUP BY `source`.moniker
     ) `Question 825` ON `source`.`moniker` = `Question 825`.`moniker`) `source`
+LIMIT 1048576
 ```
 
 ## Miner History SQL statement
